@@ -1,6 +1,10 @@
 # Knowledge Plugin for Claude
 
+![Knowledge Plugin](assets/banner.png)
+
 **Learn alongside the AI.** When you run `/kb-learn`, Claude doesn't just store text — it researches, cross-references, challenges claims, and builds a structured knowledge base that both of you can draw from. You learn, it learns, and every future conversation starts smarter.
+
+> Source code and tests: [knowledge-skills](https://github.com/farzadshbfn/knowledge-skills).
 
 ## Install
 
@@ -87,6 +91,8 @@ This means a lookup in a 10,000-line KB might only load 50 lines into context. C
 - Markdown rendering with syntax highlighting and Mermaid diagrams
 - **Interactive knowledge graph** (d3-based) showing connections between notes
 - Light/dark/system theme
+
+![Knowledge graph](assets/kb-graph.png)
 
 ### Compact and Evolve
 
