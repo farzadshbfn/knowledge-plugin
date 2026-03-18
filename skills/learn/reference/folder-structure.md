@@ -1,0 +1,1 @@
+../../compact/reference/folder-structure.md

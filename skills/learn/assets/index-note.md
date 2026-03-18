@@ -1,0 +1,1 @@
+../../compact/assets/index-note.md
