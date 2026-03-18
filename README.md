@@ -137,3 +137,7 @@ skills/
 ## License
 
 MIT
+
+---
+
+Built by [Farzad Sharbafian](https://github.com/farzadshbfn)
