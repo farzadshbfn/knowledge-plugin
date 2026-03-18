@@ -1,5 +1,7 @@
 # Knowledge Plugin for Claude
 
+![Claude](https://img.shields.io/badge/Claude-compatible-D97757?logo=claude&logoColor=fff)
+
 ![Knowledge Plugin](assets/banner.png)
 
 **Learn alongside the AI.** When you run `/kb-learn`, Claude doesn't just store text — it researches, cross-references, challenges claims, and builds a structured knowledge base that both of you can draw from. You learn, it learns, and every future conversation starts smarter.
