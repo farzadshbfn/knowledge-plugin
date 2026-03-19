@@ -153,3 +153,13 @@ Conventions apply to new notes by default. Existing notes not moved unless reque
 ### Moving files
 
 When relocation requested: `mv` files → run `validate_kb.py` → fix reported broken links. Don't rewrite content just to relocate.
+
+## 7. Validation
+
+After completing KB changes, run the validator to catch broken links, frontmatter issues, and structural errors:
+
+```bash
+uv run ${CLAUDE_SKILL_DIR}/scripts/validate_kb.py --quiet --json
+```
+
+Fix any reported errors before finishing.

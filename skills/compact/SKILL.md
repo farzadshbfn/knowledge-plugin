@@ -38,3 +38,13 @@ Every run changing knowledge files MUST prepend to `<kb-root>/CHANGELOG.md` per 
 ## 6. User Approval
 
 After all agents complete: present combined summary (files processed/moved/merged/split/created/deleted, terminology, legacy, indexes). AskUserQuestion: "Keep all", "Revert selectively", "Revert all". Selective: per-directory summaries, revert via `git checkout -- <paths>`.
+
+## 7. Validation
+
+After completing KB changes, run the validator to catch broken links, frontmatter issues, and structural errors:
+
+```bash
+uv run ${CLAUDE_SKILL_DIR}/../learn/scripts/validate_kb.py --quiet --json
+```
+
+Fix any reported errors before finishing.
