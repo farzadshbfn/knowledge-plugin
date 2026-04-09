@@ -2,6 +2,7 @@
 name: kb-monitor
 description: Monitors KB usage patterns and skill health. Activates when KB access tracking detects frequently-read content that could become a skill, or when user corrections suggest a skill is underperforming. Also triggers on `this isn't working right`, `this skill keeps getting X wrong`, `convert this to a skill`, or `what should become a skill`. Tracks cross-session observations via memory.
 argument-hint: "[--status | --convert <topic-path> | --health <skill-name>]"
+effort: low
 ---
 
 # /kb-monitor — KB Usage Monitoring & Skill Gardening
@@ -58,6 +59,14 @@ uv run ${CLAUDE_SKILL_DIR}/scripts/analyze_access.py --top-topics --candidates -
 ```
 Output is compact JSON (~50-100 tokens).
 
+### Global KB Suggestions
+
+Check for pending suggestions to global (read-only) KBs:
+```bash
+uv run ${CLAUDE_SKILL_DIR}/../learn/scripts/suggestion.py list --status pending --json
+```
+If count > 0, include in status output. Alert when > 5 pending suggestions.
+
 ### Memory
 
 Read the memory file at the standard Claude memory location for this project. Look for `monitoring_kb_observations.md`. This contains:
@@ -77,8 +86,9 @@ Use the analyzer agent when the access log is large (1000+ entries). For most ca
 ## 3. Status Mode (`--status`)
 
 1. **Gather data**: Run `analyze_access.py --top-topics --candidates --health --format=json`
-2. **Read memory**: Load `monitoring_kb_observations.md` from memory directory
-3. **Present findings**:
+2. **Check suggestions**: Run `suggestion.py list --status pending --json` to count pending global KB suggestions
+3. **Read memory**: Load `monitoring_kb_observations.md` from memory directory
+4. **Present findings**:
 
    **Skill Candidates:**
    For each candidate topic (high read count, no `skill/` folder):
@@ -92,10 +102,14 @@ Use the analyzer agent when the access log is large (1000+ entries). For most ca
    - Status: `watch` (1-2 corrections), `action` (3+ corrections)
    - Recommendation: "Fix?", "Skip", "Mark resolved"
 
+   **Pending Suggestions (Global KBs):**
+   If any pending suggestions exist, show count and summary per target KB.
+   Alert if > 5 pending — user should review in the global KB repo.
+
    **Recent Conversions:**
    List from memory's Conversion History table.
 
-4. **Prompt for action**: Use `AskUserQuestion` to ask the user what to do with each candidate/issue. Present the options clearly (Convert / Fix / Skip / Never / Not now / Wait until condition). Then process:
+5. **Prompt for action**: Use `AskUserQuestion` to ask the user what to do with each candidate/issue. Present the options clearly (Convert / Fix / Skip / Never / Not now / Wait until condition). Then process:
    - "Convert" → Switch to Section 4 (Convert Mode) for that topic
    - "Fix" → Switch to Section 5 (Health Mode) for that skill
    - "Skip" → No action, no memory update
@@ -103,7 +117,7 @@ Use the analyzer agent when the access log is large (1000+ entries). For most ca
    - "Not now" → Add `cooldown` gate with session count to memory
    - "Wait until \<condition\>" → Add `condition` gate to memory
 
-5. **Update memory**: After each interaction, update `monitoring_kb_observations.md`:
+6. **Update memory**: After each interaction, update `monitoring_kb_observations.md`:
    - Update candidate session counts and statuses
    - Record any new policy gates
    - Keep under 100 lines (archive old entries)

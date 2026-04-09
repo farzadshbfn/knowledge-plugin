@@ -3,7 +3,6 @@
 How to fetch and cache web content (articles, docs) for the kb-learn skill, minimizing tokens and noise.
 
 ## Contents
-- [URL Validation](#url-validation)
 - [Workflow](#workflow)
 - [Tool Priority](#tool-priority)
 - [Cache Management](#cache-management)

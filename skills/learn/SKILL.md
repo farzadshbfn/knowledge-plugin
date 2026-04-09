@@ -2,6 +2,7 @@
 name: kb-learn
 description: "Manages a personal knowledge base with learning tracking. Modes: (1) learn from articles, (2) learn about topics, (3) fix errors. Uses markdown links with relative paths for cross-references. Maintains a rolling changelog, validates links, and keeps a markdown-compatible knowledge base. When a note reaches ~500 lines, suggests /kb-compact."
 argument-hint: "<article|topic|fix> [url-or-text|topic-name|description]"
+effort: medium
 ---
 
 # /kb-learn
@@ -42,6 +43,7 @@ Specialized agents isolate high-volume work and enable parallelism. SKILL.md is 
 |-------|-------|---------|---------|
 | [scouter](agents/scouter.md) | haiku | KB discovery via `/kb-find` (supports `--challenge`) | all workflows |
 | [searcher](agents/searcher.md) | sonnet | Web research — search, fetch, structure findings | topic, article |
+| [challenger](agents/challenger.md) | sonnet | Adversarial web research — finds counter-evidence | topic |
 | [assessor](agents/assessor.md) | opus | Evaluate claims against KB + web evidence | article, topic |
 
 ### Orchestration Pipeline
@@ -51,13 +53,14 @@ Specialized agents isolate high-volume work and enable parallelism. SKILL.md is 
    ├── scouter (normal) → supporting evidence
    ├── scouter (challenge) → counter-evidence
    └── searcher → web findings
-2. Spawn assessor (with all evidence) → verdicts + KB impact
-3. Apply changes
+2. Spawn challenger (with claims from step 1) → counter-evidence from web
+3. Spawn assessor (with all evidence incl. challenger) → verdicts + KB impact
+4. Apply changes
 ```
 
 Not all steps required every time:
-- **Simple article**: single scouter, no assessor
-- **Complex topic**: full pipeline
+- **Article**: scouter(s) + searcher → assessor (no challenger)
+- **Topic**: full pipeline including challenger
 - **Fix**: single scouter, no web search
 
 Use agents when output is high-volume, work is parallelizable, or task benefits from model specialization. Use inline when KB is small, single simple claim, or latency matters.
@@ -94,6 +97,7 @@ After loading KB, check for concept evolution — outdated terminology, framing,
 ## 4. Shared Procedure: Update KB
 
 0. **KB routing**: Multiple KBs → infer target from context; if ambiguous, ask user.
+   - **Read-only guard**: If target KB has `[read-only]` badge (global KB), do NOT write to it. Instead, create a suggestion file in `~/.claude/knowledge-base/suggestions/` using `suggestion.py` (see `${CLAUDE_SKILL_DIR}/scripts/suggestion.py --help`). Inform the user that a suggestion was created for the global KB.
 0a. **Skill folder check**: If topic has `skill/` subfolder, route by content type:
    - "What/where/when" → KB concept notes (lightweight: summary, sources)
    - "How/when to use/procedures" → skill's `reference/` or `SKILL.md`
@@ -105,13 +109,14 @@ After loading KB, check for concept evolution — outdated terminology, framing,
 2. **Slim frontmatter**:
    <!-- CANONICAL: Note format (frontmatter, TOC). Other files reference this section, not restate it. -->
    - Topic/index notes: only `name` + `description` in frontmatter. No `title`, `summary`, `confidence`, `tags`.
+   - Inline `<conf:high>`, `<conf:medium>`, `<conf:low>` markers on claims are allowed and preserved during edits. Claims without a confidence tag should be treated as `<conf:medium>` (unverified but not flagged).
    - Body: `# {Title}` → content sections. No summary paragraph duplicating description.
    - **TOC**: Notes >100 lines need `## Contents` in first 10 lines of body.
    - Legacy notes: `name` (append " (legacy)") + `description` (mention replacement).
 
 3. Keep heading accurate after modifications.
 
-4. **Cross-references**: markdown links with relative paths. Every concept note should link to at least one other note/index. Cross-KB: use `@kb-name/path` format.
+4. **Cross-references**: markdown links with relative paths. Every concept note should link to at least one other note/index. Cross-KB: use `@kb-name/path` format. **Global KBs**: use soft references only — `see: @namespace.kb/topic` (no hard markdown links to read-only KBs).
 
 5. **Index updates**: Link new notes from relevant index. Create index if 3+ notes and none exists. Use table when section has 3+ items (see [reference/folder-structure.md](reference/folder-structure.md)).
 
@@ -133,7 +138,7 @@ Run after any KB update. Reuse KB root listing from step 5 if available; otherwi
 
 ## 5. Shared Procedure: User Approval
 
-Before non-trivial KB changes, present summary: notes to create, modify, index updates, changelog entry. Use the **AskUserQuestion tool** (not plain text) with options: "Apply all", "Apply selectively", "Cancel".
+Before non-trivial KB changes, present summary: notes to create, modify, index updates, changelog entry. Group claims by confidence level. Show `<conf:low>` claims in a separate "⚠ Low confidence" section. Use the **AskUserQuestion tool** (not plain text) with options: "Apply high/medium confidence", "Apply all (including low confidence)", "Apply selectively", "Cancel".
 
 **Exception**: Minor changes (adding source URL, fixing typo) may proceed without approval but must be mentioned.
 

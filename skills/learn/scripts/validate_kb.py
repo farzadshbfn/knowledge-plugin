@@ -21,11 +21,13 @@ from typing import Protocol
 class KBEntry:
     name: str          # e.g. "core", "ios"
     path: str          # e.g. "./knowledge"
+    readonly: bool = False
 
 
 @dataclass
 class KBConfig:
     entries: list[KBEntry]
+    namespace: str = ""
 
 
 @dataclass
@@ -190,12 +192,13 @@ REQUIRED_FIELDS: dict[str, list[str]] = {
 OPTIONAL_FIELDS: dict[str, list[str]] = {
     TOPIC:       [],
     INDEX:         [],
-    SKILL:         ["argument-hint", "user-invocable", "hooks"],
-    PROJECT_AGENT: ["tools", "model", "skills", "hooks"],
-    SKILL_AGENT:   ["background", "skills", "hooks"],
+    SKILL:         ["argument-hint", "user-invocable", "hooks", "effort"],
+    PROJECT_AGENT: ["tools", "model", "skills", "hooks", "effort"],
+    SKILL_AGENT:   ["background", "skills", "hooks", "effort"],
 }
 
 ALLOWED_MODELS = {"haiku", "sonnet", "opus"}
+ALLOWED_EFFORTS = {"low", "medium", "high", "max"}
 
 
 def validate_frontmatter(
@@ -232,6 +235,11 @@ def validate_frontmatter(
             issues.append(Issue("warning", "invalid_skills", rel_path,
                                 f"skills should be a list, got {type(fm['skills']).__name__}"))
 
+    if file_type in (SKILL, PROJECT_AGENT, SKILL_AGENT):
+        if "effort" in fm and fm["effort"] not in ALLOWED_EFFORTS:
+            issues.append(Issue("warning", "invalid_effort", rel_path,
+                                f"Invalid effort: {fm['effort']} (expected {', '.join(sorted(ALLOWED_EFFORTS))})"))
+
     allowed = set(REQUIRED_FIELDS.get(file_type, []) + OPTIONAL_FIELDS.get(file_type, []))
     if allowed:
         for key in fm:
@@ -256,7 +264,7 @@ def extract_md_links(content: str) -> list[tuple[int, str]]:
         if in_fenced:
             continue
         cleaned = re.sub(r"`[^`]*`", "", line)
-        for m in re.finditer(r"\[([^\]]*)\]\(([^)]+\.md)\)", cleaned):
+        for m in re.finditer(r"\[((?:[^\[\]]|\[[^\]]*\])*)\]\(([^)]+\.md)\)", cleaned):
             links.append((line_num, m.group(2)))
 
     return links
@@ -344,12 +352,20 @@ def check_orphans(
 
     topic_files: set[str] = set()
     for rel_path in files:
-        if "/skill/" in rel_path or "/assets/" in rel_path:
-            continue
         if Path(rel_path).name == "CHANGELOG.md":
             continue
         if any(p.startswith(".") for p in Path(rel_path).parts):
             continue
+        # Inside skill folders: include reference/ and agents/, skip assets/ and SKILL.md
+        if "/skill/" in rel_path:
+            parts = Path(rel_path).parts
+            skill_idx = list(parts).index("skill")
+            sub = parts[skill_idx + 1] if skill_idx + 1 < len(parts) else ""
+            if sub == "assets" or Path(rel_path).name == "SKILL.md":
+                continue
+            # scripts/ and other non-md infrastructure — skip
+            if sub not in ("reference", "agents"):
+                continue
         topic_files.add(rel_path)
 
     topic_files.discard("index.md")
@@ -486,6 +502,7 @@ def check_missing_index(files: dict[str, str]) -> list[Issue]:
         parent = str(Path(rel_path).parent)
         if parent and parent != ".":
             folders.add(parent)
+            folders.add(".")  # include root when subfolders exist
             p = Path(parent).parent
             while str(p) != ".":
                 folders.add(str(p))
@@ -494,7 +511,7 @@ def check_missing_index(files: dict[str, str]) -> list[Issue]:
     for folder in sorted(folders):
         parts = Path(folder).parts
 
-        if parts[-1] == "skill":
+        if parts and parts[-1] == "skill":
             if f"{folder}/SKILL.md" not in files:
                 issues.append(Issue(
                     "warning", "missing_index", folder,
@@ -507,11 +524,20 @@ def check_missing_index(files: dict[str, str]) -> list[Issue]:
             if skill_idx < len(parts) - 1:
                 continue
 
-        has_index = f"{folder}/index.md" in files or any(
-            Path(f).name.endswith("-index.md")
-            for f in files
-            if f.startswith(folder + "/") and "/" not in f[len(folder) + 1:]
-        )
+        if folder == ".":
+            prefix = ""
+            has_index = "index.md" in files or any(
+                Path(f).name.endswith("-index.md")
+                for f in files
+                if "/" not in f
+            )
+        else:
+            prefix = folder + "/"
+            has_index = f"{prefix}index.md" in files or any(
+                Path(f).name.endswith("-index.md")
+                for f in files
+                if f.startswith(prefix) and "/" not in f[len(prefix):]
+            )
         if not has_index:
             issues.append(Issue(
                 "error", "missing_index", folder,
@@ -551,13 +577,19 @@ def check_index_coverage(files: dict[str, str]) -> list[Issue]:
                 continue
             linked.add(normalize_path(file_dir, link))
 
+        is_root = folder == "."
         seen_subfolders: set[str] = set()
         for other in sorted(files):
             if other == rel_path:
                 continue
-            if not other.startswith(folder + "/"):
+            if Path(other).name == "CHANGELOG.md":
                 continue
-            remaining = other[len(folder) + 1:]
+            if is_root:
+                remaining = other
+            else:
+                if not other.startswith(folder + "/"):
+                    continue
+                remaining = other[len(folder) + 1:]
 
             if "/" not in remaining:
                 if other not in linked:
@@ -572,7 +604,7 @@ def check_index_coverage(files: dict[str, str]) -> list[Issue]:
                     continue
                 seen_subfolders.add(subfolder_name)
 
-                subfolder_path = f"{folder}/{subfolder_name}"
+                subfolder_path = f"{subfolder_name}" if is_root else f"{folder}/{subfolder_name}"
                 if is_skill_index:
                     has_link = any(
                         l.startswith(subfolder_path + "/") for l in linked
@@ -617,6 +649,33 @@ def check_changelog(
             "KB has changes but CHANGELOG.md was not updated",
         ))
 
+    return issues
+
+
+_VALID_CONF_TAGS = {"<conf:high>", "<conf:medium>", "<conf:low>"}
+_CONF_TAG_RE = re.compile(r"<conf:[^>]*>")
+
+
+def check_confidence_tags(files: dict[str, str]) -> list[Issue]:
+    """Validate inline confidence tags in topic notes."""
+    issues: list[Issue] = []
+    for rel_path, content in files.items():
+        if classify_file(rel_path) != TOPIC:
+            continue
+        for match in _CONF_TAG_RE.finditer(content):
+            tag = match.group(0)
+            if tag not in _VALID_CONF_TAGS:
+                issues.append(Issue(
+                    "error", "invalid_conf_tag", rel_path,
+                    f"Malformed confidence tag: {tag}",
+                    "valid tags: <conf:high>, <conf:medium>, <conf:low>",
+                ))
+            elif tag == "<conf:low>":
+                issues.append(Issue(
+                    "warning", "low_confidence", rel_path,
+                    "Low-confidence claim present",
+                    f"found {tag} — consider verifying or removing",
+                ))
     return issues
 
 
@@ -744,6 +803,7 @@ def validate_kb(
     result.issues.extend(check_skill_scope(all_files))
     result.issues.extend(check_missing_index(all_files))
     result.issues.extend(check_index_coverage(all_files))
+    result.issues.extend(check_confidence_tags(all_files))
 
     return result
 
@@ -833,6 +893,93 @@ def check_cross_kb_escape(
     return issues
 
 
+def check_hard_links_to_readonly(
+    config: KBConfig,
+    kb_file_maps: dict[str, dict[str, str]],
+) -> list[Issue]:
+    """Reject hard markdown links (not soft `see:` refs) targeting readonly KBs."""
+    issues: list[Issue] = []
+    readonly_names = {e.name for e in config.entries if e.readonly}
+    if not readonly_names:
+        return issues
+
+    for kb_name, files in kb_file_maps.items():
+        if kb_name in readonly_names:
+            continue  # don't check inside readonly KBs themselves
+        for rel_path, content in files.items():
+            in_code_block = False
+            for line_num, line in enumerate(content.split("\n"), 1):
+                if line.strip().startswith("```"):
+                    in_code_block = not in_code_block
+                    continue
+                if in_code_block:
+                    continue
+                cleaned = re.sub(r"`[^`]*`", "", line)
+                for m in re.finditer(r"\[([^\]]+)\]\(@([^/]+(?:\.[^/]+)?)/([^)]+)\)", cleaned):
+                    target_kb = m.group(2)
+                    if target_kb in readonly_names:
+                        issues.append(Issue(
+                            "error", "hard_link_to_readonly", f"[{kb_name}] {rel_path}",
+                            f"Hard markdown link to read-only KB '@{target_kb}' — use soft reference (`see: @{target_kb}/topic`) instead",
+                            f"line {line_num}",
+                        ))
+    return issues
+
+
+def check_soft_refs(
+    config: KBConfig,
+    kb_file_maps: dict[str, dict[str, str]],
+) -> list[Issue]:
+    """Validate `see: @namespace.kb/topic` references point to known KBs."""
+    issues: list[Issue] = []
+    kb_names = {e.name for e in config.entries}
+
+    for kb_name, files in kb_file_maps.items():
+        for rel_path, content in files.items():
+            in_code_block = False
+            for line_num, line in enumerate(content.split("\n"), 1):
+                if line.strip().startswith("```"):
+                    in_code_block = not in_code_block
+                    continue
+                if in_code_block:
+                    continue
+                cleaned = re.sub(r"`[^`]*`", "", line)
+                for m in re.finditer(r"see:\s+@([^\s/]+)/(\S+)", cleaned):
+                    ref_kb = m.group(1)
+                    if ref_kb not in kb_names:
+                        issues.append(Issue(
+                            "warning", "unknown_soft_ref", f"[{kb_name}] {rel_path}",
+                            f"Soft reference to unknown KB: @{ref_kb}",
+                            f"line {line_num}",
+                        ))
+    return issues
+
+
+def check_readonly_writes(
+    config: KBConfig,
+    changed_files: list[str],
+) -> list[Issue]:
+    """Reject file changes inside read-only KB paths."""
+    issues: list[Issue] = []
+    from os.path import abspath, commonpath
+
+    for entry in config.entries:
+        if not entry.readonly:
+            continue
+        abs_root = abspath(entry.path)
+        for f in changed_files:
+            abs_file = abspath(f)
+            try:
+                if commonpath([abs_file, abs_root]) == abs_root:
+                    issues.append(Issue(
+                        "error", "readonly_kb_write", f,
+                        f"File modified in read-only KB '{entry.name}' — changes to read-only KBs are not allowed",
+                    ))
+            except ValueError:
+                continue
+    return issues
+
+
 def validate_multi_kb(
     config: KBConfig,
     *,
@@ -849,6 +996,18 @@ def validate_multi_kb(
     kb_file_maps: dict[str, dict[str, str]] = {}
 
     for entry in config.entries:
+        # Skip full validation of readonly (global) KBs — only load their files for cross-KB checks
+        if entry.readonly:
+            all_files: dict[str, str] = {}
+            for rel_path in fs.list_md_files(entry.path):
+                full = f"{entry.path}/{rel_path}"
+                try:
+                    all_files[rel_path] = fs.read_text(full)
+                except (OSError, UnicodeDecodeError):
+                    continue
+            kb_file_maps[entry.name] = all_files
+            continue
+
         result = validate_kb(entry.path, fs=fs, agent_root=agent_root)
 
         for issue in result.issues:
@@ -864,7 +1023,7 @@ def validate_multi_kb(
         combined.stats.asset_files += result.stats.asset_files
         combined.stats.total_links += result.stats.total_links
 
-        all_files: dict[str, str] = {}
+        all_files = {}
         for rel_path in fs.list_md_files(entry.path):
             full = f"{entry.path}/{rel_path}"
             try:
@@ -875,11 +1034,15 @@ def validate_multi_kb(
 
     combined.issues.extend(check_cross_kb_links(config, kb_file_maps))
     combined.issues.extend(check_cross_kb_escape(config, kb_file_maps))
+    combined.issues.extend(check_hard_links_to_readonly(config, kb_file_maps))
+    combined.issues.extend(check_soft_refs(config, kb_file_maps))
 
     changed = _get_git_changed_files()
     if changed:
+        combined.issues.extend(check_readonly_writes(config, changed))
         for entry in config.entries:
-            combined.issues.extend(check_changelog(changed, entry.path))
+            if not entry.readonly:
+                combined.issues.extend(check_changelog(changed, entry.path))
 
     return combined
 
@@ -948,7 +1111,7 @@ def load_config(config_path: str, fs: FileSystem | None = None) -> KBConfig:
         KBEntry(name=e["name"], path=e["path"])
         for e in data.get("kb_roots", [])
     ]
-    return KBConfig(entries=entries)
+    return KBConfig(entries=entries, namespace=data.get("namespace", ""))
 
 
 def _get_git_changed_files() -> list[str]:

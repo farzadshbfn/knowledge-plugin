@@ -171,6 +171,12 @@ body {
   letter-spacing: 1px;
   color: var(--sidebar-dim);
 }
+.tree-kb-label-global {
+  margin-top: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  color: var(--accent);
+}
 
 .tree-item {
   display: flex;
@@ -329,6 +335,15 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+.search-result-tag-global {
+  font-size: 10px;
+  color: var(--accent);
+  background: var(--accent-tint);
+  padding: 1px 6px;
+  border-radius: 3px;
+  margin-left: auto;
+  white-space: nowrap;
 }
 .search-no-results {
   padding: 16px;
@@ -789,24 +804,25 @@ function collectNotes(data) {
   const notes = [];
   if (!data || !data.kbs) return notes;
   for (const kb of data.kbs) {
-    if (kb.tree) walkNode(kb.tree, kb.kb_name, notes);
+    const isGlobal = !!kb.readonly;
+    if (kb.tree) walkNode(kb.tree, kb.kb_name, isGlobal, notes);
   }
   return notes;
 }
 
-function walkNode(node, kbName, out) {
+function walkNode(node, kbName, isGlobal, out) {
   if (node.index) {
-    out.push({ ...node.index, kb: kbName });
+    out.push({ ...node.index, kb: kbName, global: isGlobal });
   }
   if (node.notes) {
-    for (const n of node.notes) out.push({ ...n, kb: kbName });
+    for (const n of node.notes) out.push({ ...n, kb: kbName, global: isGlobal });
   }
   if (node.skill) {
-    out.push({ ...node.skill, kb: kbName });
+    out.push({ ...node.skill, kb: kbName, global: isGlobal });
   }
   if (node.children) {
     for (const key of Object.keys(node.children)) {
-      walkNode(node.children[key], kbName, out);
+      walkNode(node.children[key], kbName, isGlobal, out);
     }
   }
 }
@@ -884,6 +900,11 @@ function findKbForPath(path) {
   if (!kbConfig || !kbConfig.kb_roots) return null;
   for (const entry of kbConfig.kb_roots) {
     const norm = entry.path.replace(/^\.\//, "");
+    // Absolute paths (global KBs): match against absolute path prefix
+    if (path.startsWith("/") && entry.path.startsWith("/")) {
+      const absNorm = entry.path.replace(/\/$/, "");
+      if (path.startsWith(absNorm + "/")) return entry;
+    }
     if (path.startsWith(norm + "/") || path.startsWith("./" + norm + "/")) {
       return entry;
     }
@@ -895,7 +916,12 @@ function findKbForPath(path) {
 function toUrlPath(fsPath) {
   const kb = findKbForPath(fsPath);
   if (!kb) return fsPath;
-  const norm = kb.path.replace(/^\.\//, "");
+  const norm = kb.path.replace(/^\.\//, "").replace(/\/$/, "");
+  // Absolute path (global KB)
+  if (fsPath.startsWith("/") && kb.path.startsWith("/")) {
+    const absNorm = kb.path.replace(/\/$/, "");
+    if (fsPath.startsWith(absNorm + "/")) return kb.name + fsPath.slice(absNorm.length);
+  }
   if (fsPath.startsWith(norm + "/")) return kb.name + fsPath.slice(norm.length);
   if (fsPath.startsWith("./" + norm + "/")) return kb.name + fsPath.slice(norm.length + 2);
   return fsPath;
@@ -922,33 +948,63 @@ function renderTree() {
 
   if (!treeData || !treeData.kbs) return;
 
-  for (const kb of treeData.kbs) {
-    const label = document.createElement("div");
-    label.className = "tree-kb-label";
-    label.textContent = (kb.kb_name || "default") + " \u25BE";
-    label.style.cursor = "pointer";
-    container.appendChild(label);
+  const localKBs = treeData.kbs.filter(kb => !kb.readonly);
+  const globalKBs = treeData.kbs.filter(kb => kb.readonly);
 
-    const kbWrap = document.createElement("div");
-    kbWrap.className = "tree-children open";
-    container.appendChild(kbWrap);
+  // Render local KBs at top level
+  for (const kb of localKBs) {
+    renderKBSection(container, kb);
+  }
 
-    label.addEventListener("click", () => {
-      const isOpen = kbWrap.classList.toggle("open");
-      label.textContent = (kb.kb_name || "default") + (isOpen ? " \u25BE" : " \u25B8");
-      // Load/focus the KB root index
-      if (kb.tree && kb.tree.index) {
-        const path = kb.tree.index.path;
-        if (typeof currentView !== "undefined" && currentView === "graph") focusGraphNode(path);
-        else loadFile(path);
-      }
+  // Render global KBs grouped under a "global" super folder, collapsed by default
+  if (globalKBs.length > 0) {
+    const globalLabel = document.createElement("div");
+    globalLabel.className = "tree-kb-label tree-kb-label-global";
+    globalLabel.textContent = "global \u25B8";
+    globalLabel.style.cursor = "pointer";
+    container.appendChild(globalLabel);
+
+    const globalWrap = document.createElement("div");
+    globalWrap.className = "tree-children"; // no "open" — collapsed by default
+    container.appendChild(globalWrap);
+
+    globalLabel.addEventListener("click", () => {
+      const isOpen = globalWrap.classList.toggle("open");
+      globalLabel.textContent = "global" + (isOpen ? " \u25BE" : " \u25B8");
     });
 
-    if (kb.tree && kb.tree.children) {
-      const sorted = Object.keys(kb.tree.children).sort();
-      for (const key of sorted) {
-        kbWrap.appendChild(buildTreeNode(key, kb.tree.children[key], 0));
-      }
+    for (const kb of globalKBs) {
+      renderKBSection(globalWrap, kb);
+    }
+  }
+}
+
+function renderKBSection(container, kb) {
+  const label = document.createElement("div");
+  label.className = "tree-kb-label";
+  label.textContent = (kb.kb_name || "default") + " \u25BE";
+  label.style.cursor = "pointer";
+  container.appendChild(label);
+
+  const kbWrap = document.createElement("div");
+  kbWrap.className = "tree-children open";
+  container.appendChild(kbWrap);
+
+  label.addEventListener("click", () => {
+    const isOpen = kbWrap.classList.toggle("open");
+    label.textContent = (kb.kb_name || "default") + (isOpen ? " \u25BE" : " \u25B8");
+    // Load/focus the KB root index
+    if (kb.tree && kb.tree.index) {
+      const path = kb.tree.index.path;
+      if (typeof currentView !== "undefined" && currentView === "graph") focusGraphNode(path);
+      else loadFile(path);
+    }
+  });
+
+  if (kb.tree && kb.tree.children) {
+    const sorted = Object.keys(kb.tree.children).sort();
+    for (const key of sorted) {
+      kbWrap.appendChild(buildTreeNode(key, kb.tree.children[key], 0));
     }
   }
 }
@@ -1376,7 +1432,8 @@ function doSearch() {
     scored.push({ ...note, gap: best.gap, sortKey, matchStart: best.start, matchEnd: best.end, bestField, bestText });
   }
 
-  scored.sort((a, b) => a.sortKey - b.sortKey);
+  // Sort by score, tie-break: local before global
+  scored.sort((a, b) => a.sortKey - b.sortKey || (a.global ? 1 : 0) - (b.global ? 1 : 0));
   const top = scored.slice(0, 25);
 
   resultsBody.innerHTML = "";
@@ -1401,9 +1458,11 @@ function doSearch() {
 
     const div = document.createElement("div");
     div.className = "search-result";
+    const globalTag = hit.global ? `<span class="search-result-tag-global">global</span>` : "";
     div.innerHTML = `
       <div class="search-result-top">
         <span class="search-result-name">${nameHtml}</span>
+        ${globalTag}
       </div>
       <span class="search-result-desc">${descHtml}</span>
       <span class="search-result-path">${esc(hit.path)}</span>
