@@ -1191,6 +1191,9 @@ def main(argv: list[str] | None = None) -> int:
             if args.config:
                 print(f"ERROR: config file '{cfg_path}' not found.", file=sys.stderr)
                 return 1
+            # No config found and no explicit path — not a KB project, skip silently
+            if args.hook:
+                return 0
             kb_root = "."
             if not Path(kb_root).is_dir():
                 print(f"ERROR: KB root '{kb_root}' does not exist.", file=sys.stderr)
