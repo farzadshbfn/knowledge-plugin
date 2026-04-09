@@ -42,4 +42,4 @@ End with: Overall Summary (3-5 sentences), Evolution Detected (if any).
 - Transparent reasoning — justify every verdict
 - Distinguish claim types — factual, definitions, opinions need different evidence standards
 - Flag evolution — same concept with different names/framing = EVOLVED
-- Existing KB claims without a `<conf:>` tag should be treated as medium confidence (unverified but not flagged) — do not assume they are high confidence
+- Existing KB claims without a confidence tag should be treated as medium confidence (unverified but not flagged) — do not assume they are high confidence
